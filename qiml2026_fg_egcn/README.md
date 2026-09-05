@@ -63,7 +63,7 @@ The implementation follows the paper where specified:
 - seed 42;
 - checkpoint selection by validation illicit F1.
 
-The article states that timesteps 1–34 are used for training/model selection but does not specify the validation subdivision. The initial reproduction uses **1–30 train, 31–34 validation, 35–49 test** as an explicit assumption. See `REPRODUCIBILITY_NOTES.md`.
+The article states that timesteps 1–34 are used for training/model selection but does not specify the validation subdivision. The initial reproduction therefore uses **1–29 train, 30–34 validation, 35–49 test** as an explicit assumption. This keeps a five-step validation window and leaves the paper's test window untouched. See `REPRODUCIBILITY_NOTES.md`.
 
 ## Run
 
@@ -73,6 +73,7 @@ source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
 pip install -r qiml2026_fg_egcn/requirements.txt
 export PYTHONPATH=$PWD/qiml2026_fg_egcn/src
 python -m fg_egcn.cli --config qiml2026_fg_egcn/configs/paper.yaml
+python qiml2026_fg_egcn/scripts/compare_to_paper.py --result outputs/fg_egcn_paper/result.json
 ```
 
 ## Why this base is useful for the quantum contribution
