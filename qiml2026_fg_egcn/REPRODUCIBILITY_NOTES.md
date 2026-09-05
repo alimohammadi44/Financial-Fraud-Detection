@@ -32,13 +32,14 @@ Because FG-EGCN explicitly adopts EvolveGCN-H, the implementation was cross-chec
 
 These are explicit reproduction assumptions/sensitivity variables, not claimed author settings.
 
-1. The paper does not state how timesteps 1–34 are subdivided into training and validation despite selecting the best checkpoint by validation illicit F1. Initial choice: train 1–30, validation 31–34.
+1. The paper does not state how timesteps 1–34 are subdivided into training and validation despite selecting the best checkpoint by validation illicit F1. Initial choice: **train 1–29, validation 30–34**. This preserves the authors' 35–49 test window and provides a five-timestep validation block. The alternative 1–30 / 31–34 split is retained as a sensitivity check if necessary.
 2. Exact hidden width of the gate MLP is not stated. Initial choice: 64.
 3. The paper denotes the feature/gate nonlinearity by `delta` without naming the function. Initial choice: ReLU.
 4. The public Elliptic feature CSV stores `txId`, `time_step`, and 165 additional numeric columns. The original Elliptic definition counts the time step among the 94 local features. Initial choice: model features are columns 1:95, i.e. time step + the following 93 local attributes; time step is also used to assign temporal snapshots.
 5. Exact sparse orientation used to implement symmetric normalization on the directed adjacency is not published. We preserve listed source->target edges, add self-loops, and use target-degree source-to-target normalization; graph-orientation sensitivity must be checked if the target result is not approached.
 6. Exact focal-loss reduction is not stated. Initial choice: mean over labeled nodes across the complete temporal training window, weighted by the reported licit/illicit alpha entries; unknown nodes do not contribute supervised loss.
 7. The paper gives a single fixed seed (42), not a multi-seed uncertainty estimate. For C1, seed 42 is the direct reproduction; for the QIML study, we will add multiple seeds after the baseline is frozen.
+8. The textual architecture shorthand can be read as `94 -> 64 -> C`, while the fusion equations require the temporal representation `Z` and feature representation `S` to share hidden dimension `h` before the classifier. The implementation therefore uses two temporal graph layers with hidden dimension 64 (`94 -> 64 -> 64`) followed by the 64-to-2 classifier; this is the equation-consistent interpretation.
 
 ## Reproduction discipline
 
