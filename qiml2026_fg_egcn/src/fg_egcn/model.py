@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import List, Tuple
 
 import torch
@@ -10,10 +11,11 @@ import torch.nn.functional as F
 def normalized_directed_propagation(x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
     """Apply D^-1/2 (A+I) D^-1/2 to source-to-target messages.
 
-    The paper retains directed transaction edges and specifies symmetric GCN
-    normalization after adding self-loops. For sparse edge-index execution we
-    treat each listed edge as source->target and use the target-degree vector in
-    the same convention as common source-to-target GCN implementations.
+    FG-EGCN describes the Elliptic edges as directed and applies symmetric GCN
+    normalization after self-loop addition. We preserve the listed direction and
+    use the target-degree convention used by common source-to-target sparse GCN
+    implementations. This sparse orientation is recorded as a reproduction
+    choice because the article does not publish its adjacency-construction code.
     """
     n = x.shape[0]
     device = x.device
@@ -36,12 +38,50 @@ def normalized_directed_propagation(x: torch.Tensor, edge_index: torch.Tensor) -
     return out
 
 
-class EvolveWeightGCNLayer(nn.Module):
-    """Equation-level EvolveGCN-H-style graph layer from the FG-EGCN paper.
+class MatrixGRUGate(nn.Module):
+    """Matrix-GRU gate used by the original EvolveGCN-H formulation."""
 
-    W_t is the recurrent hidden state. A learnable projection vector ranks nodes;
-    the top d_in rows form a compact summary, which is linearly aligned to the
-    d_in x d_out weight-state shape before a row-wise GRU update.
+    def __init__(self, rows: int, cols: int, activation: str) -> None:
+        super().__init__()
+        self.W = nn.Parameter(torch.empty(rows, rows))
+        self.U = nn.Parameter(torch.empty(rows, rows))
+        self.bias = nn.Parameter(torch.zeros(rows, cols))
+        bound = 1.0 / math.sqrt(rows)
+        nn.init.uniform_(self.W, -bound, bound)
+        nn.init.uniform_(self.U, -bound, bound)
+        if activation not in {"sigmoid", "tanh"}:
+            raise ValueError("activation must be sigmoid or tanh")
+        self.activation = activation
+
+    def forward(self, x: torch.Tensor, hidden: torch.Tensor) -> torch.Tensor:
+        value = self.W @ x + self.U @ hidden + self.bias
+        return torch.sigmoid(value) if self.activation == "sigmoid" else torch.tanh(value)
+
+
+class MatrixGRUCell(nn.Module):
+    """Evolve a d_in x d_out graph-convolution weight matrix."""
+
+    def __init__(self, rows: int, cols: int) -> None:
+        super().__init__()
+        self.update = MatrixGRUGate(rows, cols, "sigmoid")
+        self.reset = MatrixGRUGate(rows, cols, "sigmoid")
+        self.candidate = MatrixGRUGate(rows, cols, "tanh")
+
+    def forward(self, summary: torch.Tensor, previous: torch.Tensor) -> torch.Tensor:
+        update = self.update(summary, previous)
+        reset = self.reset(summary, previous)
+        candidate = self.candidate(summary, reset * previous)
+        return (1.0 - update) * previous + update * candidate
+
+
+class EvolveWeightGCNLayer(nn.Module):
+    """FG-EGCN temporal graph layer with EvolveGCN-H matrix weight evolution.
+
+    Han et al. specify k=d_l TopK rows and a linear projection when the summary
+    shape does not match W_t. The original EvolveGCN-H summarizer normalizes its
+    scoring vector and weights selected rows by tanh(score). We combine these
+    two explicit specifications: select k=d_in nodes, score-weight them, transpose
+    to d_in x d_in, then project to d_in x d_out before the matrix-GRU update.
     """
 
     def __init__(self, d_in: int, d_out: int, dropout: float) -> None:
@@ -51,30 +91,45 @@ class EvolveWeightGCNLayer(nn.Module):
         self.dropout = dropout
 
         self.initial_weight = nn.Parameter(torch.empty(d_in, d_out))
-        nn.init.xavier_uniform_(self.initial_weight)
-        self.score_vector = nn.Parameter(torch.empty(d_in))
-        nn.init.normal_(self.score_vector, mean=0.0, std=1.0 / max(1, d_in) ** 0.5)
+        bound = 1.0 / math.sqrt(d_out)
+        nn.init.uniform_(self.initial_weight, -bound, bound)
 
-        # Eq. (7) says a linear projection is used when TopK summary width and
-        # W_t do not match. This maps each selected d_in-dimensional row to d_out.
+        self.score_vector = nn.Parameter(torch.empty(d_in, 1))
+        score_bound = 1.0 / math.sqrt(d_in)
+        nn.init.uniform_(self.score_vector, -score_bound, score_bound)
+
+        # FG-EGCN Eq. (7) explicitly allows projection to align the TopK
+        # summary with W_t. For d_in != d_out this maps columns accordingly.
         self.summary_projection = nn.Linear(d_in, d_out)
-        self.weight_gru = nn.GRUCell(input_size=d_out, hidden_size=d_out)
+        self.weight_gru = MatrixGRUCell(rows=d_in, cols=d_out)
 
         self.residual_projection = nn.Identity() if d_in == d_out else nn.Linear(d_in, d_out)
         self.layer_norm = nn.LayerNorm(d_out)
 
     def _summary(self, x: torch.Tensor) -> torch.Tensor:
-        scores = x @ self.score_vector
-        k = min(self.d_in, x.shape[0])
-        if k == 0:
+        if x.shape[0] == 0:
             return x.new_zeros((self.d_in, self.d_out))
-        idx = torch.topk(scores, k=k, largest=True, sorted=False).indices
-        selected = x[idx]
+
+        norm = self.score_vector.norm().clamp_min(1e-12)
+        scores = (x @ self.score_vector / norm).reshape(-1)
+        k = min(self.d_in, x.shape[0])
+        values, idx = torch.topk(scores, k=k, largest=True, sorted=False)
+        selected = x[idx] * torch.tanh(values).unsqueeze(-1)
+
+        # Real Elliptic snapshots contain far more than d_in nodes. Padding is
+        # only a defensive path for tiny synthetic/unit-test snapshots.
         if k < self.d_in:
-            selected = torch.cat(
-                [selected, x.new_zeros((self.d_in - k, self.d_in))], dim=0
-            )
-        return self.summary_projection(selected)
+            if k == 0:
+                selected = x.new_zeros((self.d_in, self.d_in))
+            else:
+                selected = torch.cat(
+                    [selected, selected[-1:].expand(self.d_in - k, -1)], dim=0
+                )
+
+        # selected: d_in x d_in; original EvolveGCN-H TopK transposes the
+        # selected-node matrix before passing it to the matrix GRU.
+        summary_square = selected.transpose(0, 1)
+        return self.summary_projection(summary_square)
 
     def forward(
         self,
@@ -108,17 +163,14 @@ class FGEGCN(nn.Module):
         num_classes: int = 2,
     ) -> None:
         super().__init__()
-        if num_layers != 2:
-            # The class supports other values, but the published configuration is 2.
-            pass
         dims = [input_dim] + [hidden_dim] * num_layers
         self.temporal_layers = nn.ModuleList(
             [EvolveWeightGCNLayer(dims[i], dims[i + 1], dropout) for i in range(num_layers)]
         )
 
         self.feature_projection = nn.Linear(input_dim, hidden_dim)
-        # The paper denotes the feature/gate nonlinearity as delta but does not
-        # name it. ReLU is the explicit initial reproduction assumption.
+        # The paper denotes this nonlinearity as delta without naming it; ReLU
+        # is an explicit reproduction assumption and is recorded in the notes.
         self.gate_mlp = nn.Sequential(
             nn.Linear(2 * hidden_dim, gate_hidden_dim),
             nn.ReLU(),
@@ -150,8 +202,6 @@ class FGEGCN(nn.Module):
         fused = s + gamma * (z - s)
         logits = self.classifier(fused)
 
-        # Exposing z/s/gamma/fused is intentional: after the classical baseline
-        # is frozen these tensors become the inputs to QIML routing analyses.
         return {
             "logits": logits,
             "z_graph": z,
