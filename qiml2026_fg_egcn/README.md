@@ -23,7 +23,15 @@ These are reproduction targets, not results claimed by this repository until the
 
 ## Elliptic data
 
-Use the original Elliptic distribution and place:
+The original dataset has 203,769 transaction nodes, 234,355 directed edges, 49 time steps, and 166 node features. The first 94 are local features and include the time step; the source dataset states that there are no edges between different time steps.
+
+The dataset is intentionally not committed. Either obtain it from the original Kaggle distribution or use PyTorch Geometric's public mirror:
+
+```bash
+python qiml2026_fg_egcn/scripts/fetch_elliptic.py
+```
+
+Expected files:
 
 ```text
 data/raw/elliptic/
@@ -32,7 +40,7 @@ data/raw/elliptic/
   elliptic_txs_edgelist.csv
 ```
 
-The dataset is intentionally not committed.
+Please cite Weber et al. (2019) and respect the original Elliptic CC BY-NC-ND 4.0 license.
 
 ## Reproduction protocol
 
@@ -43,6 +51,7 @@ The implementation follows the paper where specified:
 - first **94 local features** are used;
 - 49 temporal snapshots are preserved;
 - timesteps 35–49 are held out as the chronological test period;
+- EvolveGCN-H **matrix-GRU** temporal parameter evolution;
 - two temporal graph-convolution layers;
 - hidden dimension 64;
 - dropout 0.5;
@@ -59,6 +68,9 @@ The article states that timesteps 1–34 are used for training/model selection b
 ## Run
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+pip install -r qiml2026_fg_egcn/requirements.txt
 export PYTHONPATH=$PWD/qiml2026_fg_egcn/src
 python -m fg_egcn.cli --config qiml2026_fg_egcn/configs/paper.yaml
 ```
