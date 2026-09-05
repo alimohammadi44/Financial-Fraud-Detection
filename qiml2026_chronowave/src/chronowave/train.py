@@ -8,7 +8,6 @@ from typing import Dict
 
 import numpy as np
 import torch
-from sklearn.metrics import f1_score
 
 from .data import GraphBundle
 from .metrics import classification_metrics
@@ -69,8 +68,17 @@ def train_one_seed(bundle: GraphBundle, cfg: Dict, seed: int, out_dir: Path) -> 
     y = bundle.y.to(device)
     train_mask = bundle.train_mask.to(device)
     val_mask_np = bundle.val_mask.numpy()
+    y_np = bundle.y.numpy()
 
-    best_f1 = -1.0
+    # The article says early stopping uses validation F1 but does not specify
+    # the averaging convention. Make it explicit/configurable rather than
+    # silently assuming illicit-class, macro, or weighted F1.
+    validation_metric = str(train_cfg.get("validation_metric", "weighted_f1"))
+    allowed = {"illicit_f1", "macro_f1", "weighted_f1", "pr_auc", "roc_auc"}
+    if validation_metric not in allowed:
+        raise ValueError(f"validation_metric must be one of {sorted(allowed)}")
+
+    best_score = -float("inf")
     best_state = None
     best_epoch = -1
     stale = 0
@@ -86,11 +94,11 @@ def train_one_seed(bundle: GraphBundle, cfg: Dict, seed: int, out_dir: Path) -> 
         scheduler.step()
 
         val_prob, _ = _probabilities(model, bundle, bundle.val_edge_index, device)
-        val_pred = (val_prob[val_mask_np] >= 0.5).astype(int)
-        val_f1 = f1_score(bundle.y.numpy()[val_mask_np], val_pred, pos_label=1, zero_division=0)
+        val_metrics = classification_metrics(y_np[val_mask_np], val_prob[val_mask_np])
+        score = float(val_metrics[validation_metric])
 
-        if val_f1 > best_f1 + 1e-12:
-            best_f1 = float(val_f1)
+        if score > best_score + 1e-12:
+            best_score = score
             best_state = copy.deepcopy(model.state_dict())
             best_epoch = epoch
             stale = 0
@@ -105,8 +113,13 @@ def train_one_seed(bundle: GraphBundle, cfg: Dict, seed: int, out_dir: Path) -> 
 
     test_prob, embeddings = _probabilities(model, bundle, bundle.test_edge_index, device)
     test_mask = bundle.test_mask.numpy()
-    metrics = classification_metrics(bundle.y.numpy()[test_mask], test_prob[test_mask])
-    metrics.update({"seed": seed, "best_epoch": best_epoch, "best_val_illicit_f1": best_f1})
+    metrics = classification_metrics(y_np[test_mask], test_prob[test_mask])
+    metrics.update({
+        "seed": seed,
+        "best_epoch": best_epoch,
+        "validation_metric": validation_metric,
+        "best_validation_score": best_score,
+    })
 
     seed_dir = out_dir / f"seed_{seed}"
     seed_dir.mkdir(parents=True, exist_ok=True)
@@ -119,7 +132,10 @@ def train_one_seed(bundle: GraphBundle, cfg: Dict, seed: int, out_dir: Path) -> 
 
 
 def summarize(results: list[dict]) -> dict:
-    numeric = [key for key, value in results[0].items() if isinstance(value, (int, float)) and key != "seed"]
+    numeric = [
+        key for key, value in results[0].items()
+        if isinstance(value, (int, float)) and key != "seed"
+    ]
     summary = {"n_seeds": len(results), "seeds": [r["seed"] for r in results]}
     for key in numeric:
         arr = np.asarray([r[key] for r in results], dtype=float)
@@ -127,4 +143,5 @@ def summarize(results: list[dict]) -> dict:
             "mean": float(np.nanmean(arr)),
             "std": float(np.nanstd(arr, ddof=1)) if len(arr) > 1 else 0.0,
         }
+    summary["validation_metric"] = results[0].get("validation_metric")
     return summary
