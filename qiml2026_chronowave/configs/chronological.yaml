@@ -1,0 +1,25 @@
+data:
+  dir: data/raw/elliptic
+  split: chronological
+  train_max_time: 30
+  val_max_time: 34
+  include_timestep_in_raw_features: false
+
+model:
+  time_dim: 8
+  num_layers: 3
+  dropout: 0.4
+  hidden_dim: 128
+  heads: 4
+
+training:
+  epochs: 200
+  patience: 20
+  lr: 0.005
+  weight_decay: 0.0005
+  label_smoothing: 0.1
+  eta_min: 0.0
+
+device: cuda
+seeds: [11, 22, 33, 44, 55]
+output_dir: outputs/chronological

@@ -1,0 +1,8 @@
+torch>=2.2
+# Install torch-geometric using the wheel matching your PyTorch/CUDA build:
+# https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
+torch-geometric>=2.5
+numpy>=1.26
+pandas>=2.0
+scikit-learn>=1.3
+PyYAML>=6.0

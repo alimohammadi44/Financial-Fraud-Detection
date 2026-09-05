@@ -1,0 +1,35 @@
+data:
+  dir: data/raw/elliptic
+  split: paper_stratified
+  split_seed: 42
+  # Elliptic CSV: txId, time_step, then 165 anonymized attributes.
+  # The paper describes 166 node features plus a timestamp separately, which is
+  # ambiguous relative to the public CSV schema. Keep false as the conservative
+  # interpretation; run a sensitivity experiment with true if reproduction differs.
+  include_timestep_in_raw_features: false
+
+model:
+  time_dim: 8
+  num_layers: 3
+  dropout: 0.4
+  # NOT reported in the paper; explicit reproduction assumptions:
+  hidden_dim: 128
+  heads: 4
+
+training:
+  epochs: 200
+  patience: 20
+  lr: 0.005
+  weight_decay: 0.0005
+  label_smoothing: 0.1
+  # The paper states early stopping on validation F1 but does not state the
+  # averaging convention. weighted_f1 is the initial explicit assumption because
+  # Table 3's Recall equals Accuracy to four decimals; illicit_f1 and macro_f1
+  # must be included in the reproduction sensitivity analysis.
+  validation_metric: weighted_f1
+  # Paper gives the cosine formula but does not report eta_min.
+  eta_min: 0.0
+
+device: cuda
+seeds: [11, 22, 33, 44, 55]
+output_dir: outputs/paper_stratified

@@ -1,0 +1,17 @@
+{
+  "paper": "Lin et al., Scientific Reports 16, 1548 (2026)",
+  "doi": "10.1038/s41598-025-23901-3",
+  "elliptic_table3_mean": {
+    "accuracy": 0.9802,
+    "precision_reported": 0.9799,
+    "recall_reported": 0.9802,
+    "f1_reported": 0.9799
+  },
+  "elliptic_table3_std": {
+    "accuracy": 0.0019,
+    "precision_reported": 0.0020,
+    "recall_reported": 0.0019,
+    "f1_reported": 0.0021
+  },
+  "interpretation_note": "The paper does not state the averaging convention for Precision/Recall/F1. Because the reported recall numerically equals accuracy and all four metrics are very close on an imbalanced dataset, do not equate f1_reported with illicit-class F1 without confirmation. Compare against weighted/macro/illicit metrics separately."
+}
