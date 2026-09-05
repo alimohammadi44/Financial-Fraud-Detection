@@ -1,0 +1,55 @@
+name: QIML FG-EGCN alpha sensitivity
+
+on:
+  push:
+    branches:
+      - qiml2026-fg-egcn-reproduction
+    paths:
+      - '.github/workflows/qiml-fg-egcn-alpha-sensitivity.yml'
+  workflow_dispatch:
+
+jobs:
+  alpha-swapped:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      PYTHONPATH: ${{ github.workspace }}/qiml2026_fg_egcn/src
+      OMP_NUM_THREADS: 2
+      MKL_NUM_THREADS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install numpy pandas scikit-learn PyYAML
+      - name: Download Elliptic
+        run: python qiml2026_fg_egcn/scripts/fetch_elliptic.py
+      - name: Create swapped-alpha sensitivity config
+        run: |
+          python - <<'PY'
+          import yaml
+          src='qiml2026_fg_egcn/configs/paper.yaml'
+          dst='/tmp/alpha_swapped.yaml'
+          cfg=yaml.safe_load(open(src))
+          cfg['training']['alpha_licit']=0.29
+          cfg['training']['alpha_illicit']=0.70
+          cfg['output_dir']='outputs/fg_egcn_alpha_swapped'
+          with open(dst,'w') as f: yaml.safe_dump(cfg,f,sort_keys=False)
+          print(open(dst).read())
+          PY
+      - name: Run swapped-alpha seed-42 reproduction
+        run: python -m fg_egcn.cli --config /tmp/alpha_swapped.yaml
+      - name: Upload sensitivity result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fg-egcn-alpha-swapped-results
+          path: |
+            outputs/fg_egcn_alpha_swapped/result.json
+            outputs/fg_egcn_alpha_swapped/history.json
+            outputs/fg_egcn_alpha_swapped/dataset_metadata.json
+          if-no-files-found: warn
